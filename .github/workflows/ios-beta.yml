@@ -1,0 +1,118 @@
+name: iOS Pinyin Beta
+
+on:
+  push:
+    branches: [beta/pinyin]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-beta-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: anomalyco/hex
+          ref: a5adb4c23b5cc3dafa1026bbae1672c73175a15c
+          path: hex
+          persist-credentials: false
+      - name: Apply the Pinyin changes
+        run: |
+          git -C hex apply --check "$GITHUB_WORKSPACE/patches/ios-pinyin.patch"
+          git -C hex apply "$GITHUB_WORKSPACE/patches/ios-pinyin.patch"
+          mkdir -p hex/ios/resources
+          cp assets/PinyinLexicon.tsv assets/PinyinLexicon-LICENSE.txt hex/ios/resources/
+      - name: Generate the iOS project and resolve pinned dependencies
+        working-directory: hex/ios
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.6.app/Contents/Developer
+          xcodebuild -version
+          command -v xcodegen >/dev/null || brew install xcodegen
+          scripts/fetch-cleanup-model.sh
+          xcodegen generate
+          pins=HEXMobile.xcodeproj/project.xcworkspace/xcshareddata/swiftpm
+          mkdir -p "$pins"
+          cp Package.resolved "$pins/Package.resolved"
+          xcodebuild -resolvePackageDependencies \
+            -project HEXMobile.xcodeproj -scheme HEXMobile \
+            -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile
+      - name: Build and package the device and simulator apps
+        working-directory: hex/ios
+        run: |
+          build_app() {
+            xcodebuild build \
+              -project HEXMobile.xcodeproj -scheme HEXMobile \
+              -configuration Release -destination "$1" \
+              -derivedDataPath "$2" \
+              -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile \
+              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO DEVELOPMENT_TEAM= \
+              MARKETING_VERSION=0.1.0 CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER"
+          }
+
+          dist="$GITHUB_WORKSPACE/dist"
+          mkdir -p "$dist"
+
+          build_app 'generic/platform=iOS' "$RUNNER_TEMP/xeyboard-device"
+          device="$RUNNER_TEMP/xeyboard-device/Build/Products/Release-iphoneos/HEX.app"
+          test -f "$device/PlugIns/HEXKeyboard.appex/HEXKeyboard"
+          test -s "$device/PlugIns/HEXKeyboard.appex/PinyinLexicon.tsv"
+          test -s "$device/PlugIns/HEXKeyboard.appex/PinyinLexicon-LICENSE.txt"
+          test -f "$device/PlugIns/HEXWidgets.appex/HEXWidgets"
+          mkdir -p "$RUNNER_TEMP/device-package/Payload"
+          ditto "$device" "$RUNNER_TEMP/device-package/Payload/HEX.app"
+          ditto -c -k --keepParent "$RUNNER_TEMP/device-package/Payload" "$dist/Xeyboard-Beta-unsigned.ipa"
+
+          build_app 'generic/platform=iOS Simulator' "$RUNNER_TEMP/xeyboard-simulator"
+          simulator="$RUNNER_TEMP/xeyboard-simulator/Build/Products/Release-iphonesimulator/HEX.app"
+          test -f "$simulator/PlugIns/HEXKeyboard.appex/HEXKeyboard"
+          test -s "$simulator/PlugIns/HEXKeyboard.appex/PinyinLexicon.tsv"
+          test -s "$simulator/PlugIns/HEXKeyboard.appex/PinyinLexicon-LICENSE.txt"
+          ditto -c -k --keepParent "$simulator" "$dist/Xeyboard-Beta-iOS-Simulator.zip"
+
+          cd "$dist"
+          shasum -a 256 Xeyboard-Beta-unsigned.ipa Xeyboard-Beta-iOS-Simulator.zip > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: xeyboard-ios-beta
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: xeyboard-ios-beta
+          path: dist
+      - name: Attach builds to a GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="ios-pinyin-beta-$GITHUB_RUN_NUMBER"
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            cat > "$RUNNER_TEMP/release-notes.md" <<'EOF'
+          这是简体 26 键全拼 Beta。
+
+          - Xeyboard-Beta-unsigned.ipa 是 iPhone 构建，安装前需要为主 App 和扩展配置签名及描述文件。
+          - Xeyboard-Beta-iOS-Simulator.zip 可解压后拖到运行中的 iPhone 模拟器中安装。
+          - SHA256SUMS 用于校验两个下载文件。
+          EOF
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Xeyboard iOS Pinyin Beta $GITHUB_RUN_NUMBER" \
+              --prerelease --latest=false --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+          gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber \
+            dist/Xeyboard-Beta-unsigned.ipa dist/Xeyboard-Beta-iOS-Simulator.zip dist/SHA256SUMS

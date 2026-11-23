@@ -1,0 +1,865 @@
+diff --git a/ios/HEXKeyboard/HEXKeyboard.entitlements b/ios/HEXKeyboard/HEXKeyboard.entitlements
+index 6f2ef18..ec3170d 100644
+--- a/ios/HEXKeyboard/HEXKeyboard.entitlements
++++ b/ios/HEXKeyboard/HEXKeyboard.entitlements
+@@ -4,7 +4,7 @@
+ <dict>
+ 	<key>com.apple.security.application-groups</key>
+ 	<array>
+-		<string>group.anomaly.hex.mobile</string>
++		<string>group.com.xyydys.xeyboard</string>
+ 	</array>
+ </dict>
+ </plist>
+diff --git a/ios/HEXKeyboard/KeyboardLocalDictation.swift b/ios/HEXKeyboard/KeyboardLocalDictation.swift
+index 7ae9730..548cba0 100644
+--- a/ios/HEXKeyboard/KeyboardLocalDictation.swift
++++ b/ios/HEXKeyboard/KeyboardLocalDictation.swift
+@@ -1102,7 +1102,7 @@ private enum KeyboardSpeech {
+ final class KeyboardProbeLog: @unchecked Sendable {
+     static let shared = KeyboardProbeLog()
+ 
+-    private let logger = Logger(subsystem: "anomaly.hex.mobile.keyboard", category: "capture-probe")
++    private let logger = Logger(subsystem: "com.xyydys.xeyboard.keyboard", category: "capture-probe")
+     private let lock = NSLock()
+     private let url = FileManager.default
+         .containerURL(forSecurityApplicationGroupIdentifier: KeyboardBridge.appGroup)?
+diff --git a/ios/HEXKeyboard/KeyboardViewController.swift b/ios/HEXKeyboard/KeyboardViewController.swift
+index e75e993..85b2dc9 100644
+--- a/ios/HEXKeyboard/KeyboardViewController.swift
++++ b/ios/HEXKeyboard/KeyboardViewController.swift
+@@ -198,6 +198,7 @@ final class KeyboardViewController: UIInputViewController {
+     }
+ 
+     override func viewWillDisappear(_ animated: Bool) {
++        fullKeyboard?.engine.resetPinyin()
+         super.viewWillDisappear(animated)
+         bridge.recordKeyboardHidden(at: Date().timeIntervalSince1970)
+         switchGuess.keyboardHid(in: currentDocument, at: Date().timeIntervalSince1970)
+@@ -286,8 +287,16 @@ final class KeyboardViewController: UIInputViewController {
+         }
+     }
+ 
++    private var pinyinDocument: UUID?
++
+     override func textDidChange(_ textInput: UITextInput?) {
+         super.textDidChange(textInput)
++        if let current = currentDocument {
++            if let pinyinDocument, pinyinDocument != current {
++                fullKeyboard?.engine.resetPinyin()
++            }
++            pinyinDocument = current
++        }
+         updateKeyboardTraits()
+         followTypingLogField()
+         fullKeyboard?.textDidChange()
+@@ -922,6 +931,7 @@ final class KeyboardViewController: UIInputViewController {
+         translationFailure: TranslationFailure? = nil,
+         source: String
+     ) {
++        fullKeyboard?.engine.finishPinyin()
+         let context = editContext
+         let insertion = TranscriptFormatter.insertionText(
+             for: transcript,
+diff --git a/ios/HEXMobile/FullKeyboardSnapshotStage.swift b/ios/HEXMobile/FullKeyboardSnapshotStage.swift
+index f4d85f5..051d3ca 100644
+--- a/ios/HEXMobile/FullKeyboardSnapshotStage.swift
++++ b/ios/HEXMobile/FullKeyboardSnapshotStage.swift
+@@ -182,6 +182,8 @@ struct FullKeyboardSnapshotStage: View {
+             case "accents": Self.accentKey == "s" ? "Po" : "Laku no"
+             default: "Kasnim deset minuta, "
+             }
++        case .chinesePinyin:
++            return state == "inserted" ? "你好，欢迎使用拼音键盘。" : ""
+         case .english:
+             break
+         }
+diff --git a/ios/HEXMobile/HEXMobile.entitlements b/ios/HEXMobile/HEXMobile.entitlements
+index 6f2ef18..ec3170d 100644
+--- a/ios/HEXMobile/HEXMobile.entitlements
++++ b/ios/HEXMobile/HEXMobile.entitlements
+@@ -4,7 +4,7 @@
+ <dict>
+ 	<key>com.apple.security.application-groups</key>
+ 	<array>
+-		<string>group.anomaly.hex.mobile</string>
++		<string>group.com.xyydys.xeyboard</string>
+ 	</array>
+ </dict>
+ </plist>
+diff --git a/ios/HEXMobile/Info.plist b/ios/HEXMobile/Info.plist
+index 0d40af0..c621d3d 100644
+--- a/ios/HEXMobile/Info.plist
++++ b/ios/HEXMobile/Info.plist
+@@ -26,10 +26,10 @@
+ 			<key>CFBundleTypeRole</key>
+ 			<string>Editor</string>
+ 			<key>CFBundleURLName</key>
+-			<string>anomaly.hex.mobile.keyboard-session</string>
++			<string>com.xyydys.xeyboard.keyboard-session</string>
+ 			<key>CFBundleURLSchemes</key>
+ 			<array>
+-				<string>hex-dictation</string>
++				<string>xeyboard-dictation</string>
+ 			</array>
+ 		</dict>
+ 	</array>
+diff --git a/ios/HEXMobile/KeyboardSetup.swift b/ios/HEXMobile/KeyboardSetup.swift
+index c021f24..29ca902 100644
+--- a/ios/HEXMobile/KeyboardSetup.swift
++++ b/ios/HEXMobile/KeyboardSetup.swift
+@@ -7,7 +7,7 @@ import UIKit
+ @MainActor
+ @Observable
+ final class KeyboardSetupMonitor {
+-    static let keyboardBundleID = "anomaly.hex.mobile.keyboard"
++    static let keyboardBundleID = "com.xyydys.xeyboard.keyboard"
+ 
+     private let bridge: KeyboardBridge
+     private let observers = NotificationObservers()
+diff --git a/ios/HEXMobileTests/KeyboardBridgeTests.swift b/ios/HEXMobileTests/KeyboardBridgeTests.swift
+index a7f743b..695857f 100644
+--- a/ios/HEXMobileTests/KeyboardBridgeTests.swift
++++ b/ios/HEXMobileTests/KeyboardBridgeTests.swift
+@@ -277,7 +277,7 @@ final class KeyboardBridgeTests: XCTestCase {
+         XCTAssertEqual(KeyboardLaunchRequest(url: request.url), request)
+         // A keyboard from before the return-app setting went away may still send `return=`.
+         XCTAssertEqual(
+-            KeyboardLaunchRequest(url: URL(string: "hex-dictation://keyboard/start?ts=100&return=messages")!),
++            KeyboardLaunchRequest(url: URL(string: "xeyboard-dictation://keyboard/start?ts=100&return=messages")!),
+             request
+         )
+     }
+@@ -306,7 +306,7 @@ final class KeyboardBridgeTests: XCTestCase {
+ 
+     func testTranslationSettingsLaunchOpensAPageWithoutAHandoff() {
+         let request = KeyboardLaunchRequest.translationSettings
+-        XCTAssertEqual(request.url.absoluteString, "hex-dictation://keyboard/translation")
++        XCTAssertEqual(request.url.absoluteString, "xeyboard-dictation://keyboard/translation")
+         XCTAssertEqual(KeyboardLaunchRequest(url: request.url), request)
+         XCTAssertTrue(request.opensPage)
+         XCTAssertFalse(KeyboardLaunchRequest.startSession(requestedAt: nil).opensPage)
+@@ -314,7 +314,7 @@ final class KeyboardBridgeTests: XCTestCase {
+ 
+     func testKeyboardSetupLaunchRoundTripsWithoutAHandoff() {
+         let request = KeyboardLaunchRequest.setup
+-        XCTAssertEqual(request.url.absoluteString, "hex-dictation://keyboard/setup")
++        XCTAssertEqual(request.url.absoluteString, "xeyboard-dictation://keyboard/setup")
+         XCTAssertEqual(KeyboardLaunchRequest(url: request.url), request)
+         XCTAssertFalse(request.isHandoffExpired(at: 1_000_000))
+     }
+@@ -484,7 +484,7 @@ final class KeyboardBridgeTests: XCTestCase {
+     }
+ 
+     func testKeyboardRecordingLaunchRequiresAJob() {
+-        let url = URL(string: "hex-dictation://keyboard/record")!
++        let url = URL(string: "xeyboard-dictation://keyboard/record")!
+         XCTAssertNil(KeyboardLaunchRequest(url: url))
+     }
+ 
+diff --git a/ios/HEXShared/FullKeyboard/AutocorrectEngine.swift b/ios/HEXShared/FullKeyboard/AutocorrectEngine.swift
+index 5957554..ec0ac27 100644
+--- a/ios/HEXShared/FullKeyboard/AutocorrectEngine.swift
++++ b/ios/HEXShared/FullKeyboard/AutocorrectEngine.swift
+@@ -566,6 +566,7 @@ final class AutocorrectEngine {
+         case .ukrainian: ["я", "це", "ми"]
+         case .greek: ["θα", "δεν", "το"]
+         case .serbianLatin: ["ja", "to", "da"]
++        case .chinesePinyin: []
+         }
+     }
+ 
+@@ -589,6 +590,7 @@ final class AutocorrectEngine {
+         case .ukrainian: ["і", "але", "що"]
+         case .greek: ["και", "αλλά", "που"]
+         case .serbianLatin: ["i", "ali", "da"]
++        case .chinesePinyin: []
+         }
+     }
+ 
+@@ -609,6 +611,7 @@ final class AutocorrectEngine {
+         case .ukrainian: ["і", "в", "не", "на", "що", "я"]
+         case .greek: ["και", "να", "το", "θα", "δεν", "η"]
+         case .serbianLatin: ["i", "je", "da", "u", "se", "na"]
++        case .chinesePinyin: []
+         }
+     }
+ 
+diff --git a/ios/HEXShared/FullKeyboard/FullKeyboardEngine.swift b/ios/HEXShared/FullKeyboard/FullKeyboardEngine.swift
+index 471c7b0..41343b5 100644
+--- a/ios/HEXShared/FullKeyboard/FullKeyboardEngine.swift
++++ b/ios/HEXShared/FullKeyboard/FullKeyboardEngine.swift
+@@ -136,6 +136,30 @@ final class FullKeyboardEngine {
+     /// types the key's own); then the cell under the finger is the one.
+     private var accentOpenCell: Int?
+     private(set) var suggestions: [KeyboardSuggestion] = []
++    private var pinyin = PinyinComposition()
++    private var allowsPinyin: Bool { language == .chinesePinyin && field == .text }
++    var isComposingPinyin: Bool { pinyin.isActive }
++
++    func resetPinyin() {
++        guard pinyin.isActive else { return }
++        pinyin.reset()
++        refreshSuggestions()
++    }
++
++    @discardableResult
++    func finishPinyin(_ suggestion: KeyboardSuggestion? = nil) -> Bool {
++        guard pinyin.isActive else { return false }
++        let text: String?
++        if let suggestion, suggestion.kind == .keepLiteral {
++            text = pinyin.spelling
++            pinyin.reset()
++        } else {
++            text = pinyin.commit(suggestion?.replacement)
++        }
++        guard let text else { return false }
++        insert(text, source: "pinyin")
++        return true
++    }
+ 
+     let target: KeyboardTextTarget
+     let autocorrect: AutocorrectEngine
+@@ -192,6 +216,7 @@ final class FullKeyboardEngine {
+     var language: KeyboardLanguage = .english {
+         didSet {
+             guard language != oldValue else { return }
++            pinyin.reset()
+             cancelAllTouches()
+             autocorrect.setLanguage(language)
+             rebuildLayout(cause: "language")
+@@ -284,6 +309,7 @@ final class FullKeyboardEngine {
+ 
+     /// Call when the keyboard appears or the field changes.
+     func configureForField() {
++        pinyin.reset()
+         switch KeyboardFieldRouting.route(for: target.keyboardType) {
+         case .keys(let kind, let initialLayer):
+             field = kind
+@@ -333,6 +359,7 @@ final class FullKeyboardEngine {
+     /// dictation, an undo): the host's report is the truth again, and no swipe's pending
+     /// space belongs to the old text.
+     func forgetTextAroundKeys() {
++        resetPinyin()
+         forgetTypingContext()
+         swipedWord = nil
+     }
+@@ -356,7 +383,19 @@ final class FullKeyboardEngine {
+     func refreshSuggestions() {
+         syncLearning()
+         let next: [KeyboardSuggestion]
+-        if let swipeSuggestions {
++        if pinyin.isActive {
++            let spelling = pinyin.spelling
++            next = [KeyboardSuggestion(displayText: spelling, replacement: spelling, kind: .keepLiteral)]
++                + pinyin.candidates.prefix(2).enumerated().map { index, candidate in
++                    KeyboardSuggestion(
++                        displayText: candidate,
++                        replacement: candidate,
++                        kind: index == 0 ? .primary(autoReplace: true) : .secondary
++                    )
++                }
++        } else if allowsPinyin {
++            next = []
++        } else if let swipeSuggestions {
+             next = displayed(swipeSuggestions)
+         } else {
+             autocorrect.decoderTaps = currentTokenTaps
+@@ -381,6 +420,10 @@ final class FullKeyboardEngine {
+     }
+ 
+     func acceptSuggestion(_ suggestion: KeyboardSuggestion) {
++        if allowsPinyin {
++            if suggestions.contains(suggestion) { finishPinyin(suggestion) }
++            return
++        }
+         // `typeHeldSpace` asks `spacePending`, so the record stays until the pick's own insert
+         // replaces it; every delete below counts the token in the host's text (`textBefore`).
+         typeHeldSpace(before: suggestion)
+@@ -716,6 +759,7 @@ final class FullKeyboardEngine {
+     /// The trackpad moved the cursor `offset` UTF-16 units: what the keys knew of the text
+     /// by the old cursor no longer holds. No haptic per character, as on Apple's.
+     func trackpadMovedCursor(by offset: Int) {
++        resetPinyin()
+         forgetTypingContext()
+         tokenTaps.removeAll()
+         finishedWord = nil
+@@ -787,6 +831,7 @@ final class FullKeyboardEngine {
+                 typeSpace(at: CGPoint(x: layout.unsplitX(touch.startPoint.x), y: touch.startPoint.y))
+             }
+         case .returnKey:
++            if finishPinyin() { break }
+             if target.enablesReturnKeyAutomatically == true && !target.hasText {
+                 typingLog?.edit("return", [
+                     TypingLogField("returnKeyType", .string(TypingLogTraits.name(target.returnKeyType ?? .default))),
+@@ -878,6 +923,10 @@ final class FullKeyboardEngine {
+     /// keyboard does (black box, iOS 27.2), and the strip then offers what you typed
+     /// (`offeringRevert`); Adaptive touch keeps the word's taps for that revert.
+     func deleteBackward(takesSwipeBack: Bool = true, source: String = "key") {
++        if pinyin.deleteBackward() {
++            refreshSuggestions()
++            return
++        }
+         // The held space is a boundary question that deletes nothing: ask it before forgetting
+         // what Hex typed, and keep the record when it answers, as the text has not changed.
+         if takesSwipeBack, dropsHeldSpace() { return }
+@@ -909,6 +958,10 @@ final class FullKeyboardEngine {
+     }
+ 
+     func deleteWordBackward() {
++        if isComposingPinyin {
++            deleteBackward(takesSwipeBack: false, source: "repeat_word")
++            return
++        }
+         forgetTypingContext()
+         swipedWord = nil
+         adaptiveTouch?.forget()
+@@ -945,6 +998,17 @@ final class FullKeyboardEngine {
+     /// `down`: where a tap's finger went down, for Adaptive touch (nil for a slide from shift).
+     private func commitCharacter(_ key: KeyboardKey, at point: CGPoint, down: CGPoint? = nil) {
+         guard let character = key.character else { return }
++        if allowsPinyin {
++            if pinyin.append(character) {
++                shift.didType()
++                refreshSuggestions()
++                return
++            }
++            finishPinyin()
++            let punctuation = [",": "，", ".": "。", "?": "？", "!": "！", ":": "：", ";": "；"]
++            insert(punctuation[character] ?? character, source: "key", at: point)
++            return
++        }
+         spaceBeforeNextWord(character)
+         var text = layerState.layer == .letters && shift.isUppercase ? character.uppercased() : character
+         if layerState.layer == .letters {
+@@ -1176,6 +1240,7 @@ final class FullKeyboardEngine {
+ 
+     /// `point` is where the space bar was tapped, as on the unsplit keyboard.
+     private func typeSpace(at point: CGPoint? = nil) {
++        if finishPinyin() { return }
+         // Space never autocorrects a swiped word: it is a reading, not a typo.
+         let afterSwipe = swipedWord != nil
+         swipedWord = nil
+diff --git a/ios/HEXShared/FullKeyboard/FullKeyboardView.swift b/ios/HEXShared/FullKeyboard/FullKeyboardView.swift
+index b2769f6..995755c 100644
+--- a/ios/HEXShared/FullKeyboard/FullKeyboardView.swift
++++ b/ios/HEXShared/FullKeyboard/FullKeyboardView.swift
+@@ -151,7 +151,10 @@ final class FullKeyboardView: UIView {
+             }
+             self.engine.acceptSuggestion(suggestion)
+         }
+-        stripView.onHoldSuggestion = { [weak self] suggestion in self?.offerVocabulary(suggestion) }
++        stripView.onHoldSuggestion = { [weak self] suggestion in
++            guard let self, !self.engine.isComposingPinyin else { return }
++            self.offerVocabulary(suggestion)
++        }
+         stripView.onUndoDictation = { [weak self] in self?.undoDictation() }
+         stripView.onPaste = { [weak self] in self?.pasteFromClipboard() }
+         stripView.onOpenHexFromHint = { [weak self] in self?.openSetupFromHint() }
+@@ -173,7 +176,11 @@ final class FullKeyboardView: UIView {
+         globeButton.isAccessibilityElement = true
+         globeButton.addTarget(self, action: #selector(globeTapped), for: .touchUpInside)
+ 
+-        hexKey.onPress = { [weak self] at in self?.model.onHexKeyPress?(at) }
++        hexKey.onPress = { [weak self] at in
++            guard let self else { return }
++            if self.model.hasFullAccess { self.engine.finishPinyin() }
++            self.model.onHexKeyPress?(at)
++        }
+         hexKey.onPressAbandoned = { [weak self] in self?.model.onHexKeyAbandon?() }
+         hexKey.onHold = { [weak self] in self?.hexKeyHeld() }
+         hexKey.onHoldRelease = { [weak self] in self?.hexKeyReleased() }
+@@ -392,17 +399,22 @@ final class FullKeyboardView: UIView {
+ 
+     private func syncLanguage() {
+         let settings = languageSettings
+-        let list = if let languageOverride {
+-            KeyboardLanguageList(languages: [languageOverride], current: languageOverride)
++        let list: KeyboardLanguageList
++        if let languageOverride {
++            list = KeyboardLanguageList(languages: [languageOverride], current: languageOverride)
+         } else {
+-            KeyboardLanguageList.resolve(
+-                chosen: settings.keyboardLanguages,
++            let automatic = KeyboardLanguage.automatic(
++                dictationLanguage: settings.effectiveDictationLanguage,
++                inputModes: inputModeLanguages,
++                preferredLanguages: preferredLanguages
++            )
++            let chosen = settings.keyboardLanguages
++            let betaLanguages: [KeyboardLanguage] = automatic == .chinesePinyin
++                ? [.chinesePinyin, .english] : [automatic, .chinesePinyin]
++            list = KeyboardLanguageList.resolve(
++                chosen: chosen.isEmpty ? betaLanguages : chosen,
+                 stored: switchedLanguage ?? settings.currentKeyboardLanguage,
+-                automatic: KeyboardLanguage.automatic(
+-                    dictationLanguage: settings.effectiveDictationLanguage,
+-                    inputModes: inputModeLanguages,
+-                    preferredLanguages: preferredLanguages
+-                )
++                automatic: automatic
+             )
+         }
+         // The keys' language's layout: with English and Spanish on one keyboard, the first one's.
+@@ -447,7 +459,8 @@ final class FullKeyboardView: UIView {
+     /// With two or more languages the space bar names the keyboard's; otherwise, with Full
+     /// Access, the dictation language's.
+     private func refreshSpaceLabel() {
+-        plane.spaceLabel = languages.spaceLabel ?? (model.hasFullAccess ? model.languageSummary : nil)
++        plane.spaceLabel = languages.spaceLabel ?? (engine.language == .chinesePinyin ? engine.language.shortName
++            : (model.hasFullAccess ? model.languageSummary : nil))
+     }
+ 
+     func syncSettings() {
+@@ -772,6 +785,11 @@ final class FullKeyboardView: UIView {
+     }
+ 
+     func refreshStrip() {
++        if engine.isComposingPinyin {
++            stripOffer = nil
++            stripView.update(suggestions: engine.suggestions, showsUndo: false, statusText: nil)
++            return
++        }
+         // Without Full Access the strip suggests and corrects like any keyboard's; what
+         // dictation needs shows only once the Hex key is tapped (`showFullAccessHint`).
+         let status: String? = if model.hasFullAccess, model.stagePhase == .failed {
+diff --git a/ios/HEXShared/FullKeyboard/KeyboardLanguage.swift b/ios/HEXShared/FullKeyboard/KeyboardLanguage.swift
+index a8d18e6..4b72684 100644
+--- a/ios/HEXShared/FullKeyboard/KeyboardLanguage.swift
++++ b/ios/HEXShared/FullKeyboard/KeyboardLanguage.swift
+@@ -36,6 +36,7 @@ nonisolated enum KeyboardLanguage: String, CaseIterable, Sendable {
+     case ukrainian = "uk"
+     case greek = "el"
+     case serbianLatin = "sr-Latn"
++    case chinesePinyin = "zh-Hans"
+ 
+     /// Its own name, as Apple's keyboard list shows it.
+     var displayName: String {
+@@ -56,6 +57,7 @@ nonisolated enum KeyboardLanguage: String, CaseIterable, Sendable {
+         case .ukrainian: "Українська"
+         case .greek: "Ελληνικά"
+         case .serbianLatin: "Srpski"
++        case .chinesePinyin: "简体拼音"
+         }
+     }
+ 
+@@ -95,12 +97,13 @@ nonisolated enum KeyboardLanguage: String, CaseIterable, Sendable {
+         case .ukrainian: "uk-UA"
+         case .greek: "el-GR"
+         case .serbianLatin: "sr-Latn-RS"
++        case .chinesePinyin: "zh-CN"
+         }
+     }
+ 
+     /// Latin letters, so another Latin-script language can be autocorrected on its keys
+     /// (bilingual autocorrect). Russian's and Ukrainian's are Cyrillic, Greek's Greek.
+-    var isLatin: Bool { self != .russian && self != .ukrainian && self != .greek }
++    var isLatin: Bool { self != .russian && self != .ukrainian && self != .greek && self != .chinesePinyin }
+ 
+     /// The Apple Speech language (BCP 47) to dictate in while this layout types (Settings ›
+     /// Keyboard › Languages › Switch dictation too): the iPhone's own region where it has one
+@@ -178,6 +181,7 @@ nonisolated enum KeyboardLanguage: String, CaseIterable, Sendable {
+     var letterLayouts: [KeyboardLetterLayout] {
+         switch self {
+         case .english: [.qwerty, .azerty, .qwertz, .dvorak]
++        case .chinesePinyin: [.qwerty]
+         case .german: [.own, .qwertz, .qwerty, .azerty]
+         case .spanish: [.own, .qwerty, .azerty, .qwertz]
+         case .french: [.azerty, .qwerty, .qwertz]
+@@ -224,7 +228,7 @@ nonisolated enum KeyboardLanguage: String, CaseIterable, Sendable {
+ 
+     private var ownLetterRows: [String] {
+         switch self {
+-        case .english, .italian, .frenchCanadian, .portuguese, .polish, .romanian:
++        case .english, .italian, .frenchCanadian, .portuguese, .polish, .romanian, .chinesePinyin:
+             ["qwertyuiop", "asdfghjkl", "zxcvbnm"]
+         // Apple's French keyboards also hold a ´ dead key (AZERTY's row 3, the end of the
+         // others' row 2), which its French and English keyboard leaves out (a TestFlight
+@@ -261,6 +265,7 @@ nonisolated enum KeyboardLanguage: String, CaseIterable, Sendable {
+     /// system keyboard.
+     var letterHolds: [String: [String]] {
+         switch self {
++        case .chinesePinyin: [:]
+         case .english:
+             [
+                 "w": ["w", "ŵ"],
+@@ -482,7 +487,7 @@ nonisolated enum KeyboardLanguage: String, CaseIterable, Sendable {
+     /// system keyboard's held $, is held there.
+     var symbolHolds: [String: [String]] {
+         switch self {
+-        case .english, .serbianLatin:
++        case .english, .serbianLatin, .chinesePinyin:
+             [:]
+         case .norwegian:
+             [
+@@ -561,6 +566,7 @@ nonisolated enum KeyboardLanguage: String, CaseIterable, Sendable {
+     var spellCheckCandidates: [String] {
+         switch self {
+         case .english: ["en_US", "en"]
++        case .chinesePinyin: []
+         case .norwegian: ["nb", "nb_NO", "no", "no_NO"]
+         case .spanish: ["es", "es_ES", "es_MX"]
+         case .german: ["de", "de_DE"]
+@@ -617,7 +623,7 @@ nonisolated enum KeyboardLanguage: String, CaseIterable, Sendable {
+             ["di", "il", "la", "in", "un", "si", "le", "lo", "ha", "ho", "ma", "da", "mi", "ci",
+              "ti", "se", "ne", "no", "io", "tu", "su", "al"]
+         case .norwegian, .german, .french, .frenchCanadian, .frenchSwiss, .portuguese, .polish,
+-             .czech, .romanian, .russian, .ukrainian, .greek, .serbianLatin:
++             .czech, .romanian, .russian, .ukrainian, .greek, .serbianLatin, .chinesePinyin:
+             []
+         }
+     }
+@@ -646,7 +652,7 @@ nonisolated enum KeyboardLanguage: String, CaseIterable, Sendable {
+                 "giovedi": "giovedì", "venerdi": "venerdì",
+             ]
+         case .english, .norwegian, .spanish, .german, .french, .frenchCanadian, .frenchSwiss,
+-             .portuguese, .polish, .czech, .romanian, .russian, .ukrainian, .greek, .serbianLatin:
++             .portuguese, .polish, .czech, .romanian, .russian, .ukrainian, .greek, .serbianLatin, .chinesePinyin:
+             [:]
+         }
+     }
+@@ -658,7 +664,7 @@ nonisolated enum KeyboardLanguage: String, CaseIterable, Sendable {
+         switch self {
+         case .italian: ["e": "è", "ce": "c'è"]
+         case .english, .norwegian, .spanish, .german, .french, .frenchCanadian, .frenchSwiss,
+-             .portuguese, .polish, .czech, .romanian, .russian, .ukrainian, .greek, .serbianLatin:
++             .portuguese, .polish, .czech, .romanian, .russian, .ukrainian, .greek, .serbianLatin, .chinesePinyin:
+             [:]
+         }
+     }
+@@ -716,6 +722,8 @@ nonisolated enum KeyboardLanguage: String, CaseIterable, Sendable {
+         case "ru": return .russian
+         case "uk": return .ukrainian
+         case "el": return .greek
++        case "zh" where !parts.contains(where: { ["hant", "tw", "hk", "mo"].contains($0) }):
++            return .chinesePinyin
+         case "sr": return parts.contains("latn") ? .serbianLatin : nil
+         default: return nil
+         }
+diff --git a/ios/HEXShared/FullKeyboard/PinyinComposition.swift b/ios/HEXShared/FullKeyboard/PinyinComposition.swift
+new file mode 100644
+index 0000000..6cdec92
+--- /dev/null
++++ b/ios/HEXShared/FullKeyboard/PinyinComposition.swift
+@@ -0,0 +1,163 @@
++import Foundation
++
++struct PinyinComposition {
++    private let lexicon: PinyinLexicon?
++    private(set) var spelling = ""
++    private(set) var candidates: [String] = []
++
++    init(lexicon: PinyinLexicon? = nil) {
++        self.lexicon = lexicon
++    }
++
++    var isActive: Bool { !spelling.isEmpty }
++
++    @discardableResult
++    mutating func append(_ key: String) -> Bool {
++        let letter = key.lowercased().replacingOccurrences(of: "ü", with: "v")
++        guard letter.utf8.count == 1, spelling.utf8.count < 48 else { return false }
++        if letter == "'" {
++            guard isActive, spelling.last != "'" else { return false }
++        } else {
++            guard let byte = letter.utf8.first, (97...122).contains(byte) else { return false }
++        }
++        spelling += letter
++        updateCandidates()
++        return true
++    }
++
++    @discardableResult
++    mutating func deleteBackward() -> Bool {
++        guard isActive else { return false }
++        spelling.removeLast()
++        updateCandidates()
++        return true
++    }
++
++    mutating func commit(_ candidate: String? = nil) -> String? {
++        guard isActive else { return nil }
++        if let candidate, !candidates.contains(candidate) { return nil }
++        let output = candidate ?? candidates.first ?? spelling
++        reset()
++        return output
++    }
++
++    mutating func reset() {
++        spelling = ""
++        candidates = []
++    }
++
++    private mutating func updateCandidates() {
++        candidates = isActive ? (lexicon ?? .bundled).candidates(for: spelling) : []
++    }
++}
++
++struct PinyinLexicon: Sendable {
++    private struct Entry: Sendable {
++        let text: String
++        let weight: Int
++        let syllableBreaks: [Int]
++    }
++
++    private struct Reading {
++        var letters: [UInt8] = []
++        var syllableBreaks: [Int] = []
++
++        init(_ spelling: String) {
++            for byte in spelling.lowercased().replacingOccurrences(of: "ü", with: "v").utf8 {
++                if (97...122).contains(byte) {
++                    letters.append(byte)
++                } else if byte == 32 || byte == 39 {
++                    if !letters.isEmpty, syllableBreaks.last != letters.count {
++                        syllableBreaks.append(letters.count)
++                    }
++                }
++            }
++        }
++
++        var key: String { String(decoding: letters, as: UTF8.self) }
++    }
++
++    private struct Match {
++        let text: String
++        let pieces: Int
++        let score: Double
++
++        func ranksBefore(_ other: Match) -> Bool {
++            if pieces != other.pieces { return pieces < other.pieces }
++            if score != other.score { return score > other.score }
++            return text < other.text
++        }
++    }
++
++    static let bundled: PinyinLexicon = {
++        let bundles = [Bundle(for: PinyinResource.self), Bundle.main]
++        for bundle in bundles {
++            if let url = bundle.url(forResource: "PinyinLexicon", withExtension: "tsv"),
++               let tsv = try? String(contentsOf: url, encoding: .utf8) {
++                return PinyinLexicon(tsv: tsv)
++            }
++        }
++        return PinyinLexicon(tsv: "")
++    }()
++
++    private let entries: [String: [Entry]]
++    private let longestReading: Int
++
++    init(tsv: String) {
++        var entries: [String: [Entry]] = [:]
++        var longestReading = 0
++        for line in tsv.split(whereSeparator: \.isNewline) where !line.hasPrefix("#") {
++            let columns = line.split(separator: "\t", omittingEmptySubsequences: false)
++            guard columns.count == 3, !columns[1].isEmpty, let weight = Int(columns[2]), weight >= 0 else {
++                continue
++            }
++            let reading = Reading(String(columns[0]))
++            guard !reading.letters.isEmpty else { continue }
++            entries[reading.key, default: []].append(Entry(
++                text: String(columns[1]), weight: weight, syllableBreaks: reading.syllableBreaks
++            ))
++            longestReading = max(longestReading, reading.letters.count)
++        }
++        self.entries = entries.mapValues { group in
++            group.sorted { lhs, rhs in
++                if lhs.weight != rhs.weight { return lhs.weight > rhs.weight }
++                return lhs.text < rhs.text
++            }
++        }
++        self.longestReading = longestReading
++    }
++
++    func candidates(for spelling: String, limit: Int = 9) -> [String] {
++        let reading = Reading(spelling)
++        let length = reading.letters.count
++        guard length > 0, longestReading > 0, limit > 0 else { return [] }
++        var paths = [[Match]](repeating: [], count: length + 1)
++        paths[length] = [Match(text: "", pieces: 0, score: 0)]
++
++        for start in (0..<length).reversed() {
++            var matches: [Match] = []
++            for end in (start + 1)...min(length, start + longestReading) where !paths[end].isEmpty {
++                let key = String(decoding: reading.letters[start..<end], as: UTF8.self)
++                guard let words = entries[key] else { continue }
++                let explicitBreaks = reading.syllableBreaks.filter { start < $0 && $0 < end }
++                let allowed = words.lazy.filter { entry in
++                    explicitBreaks.allSatisfy { entry.syllableBreaks.contains($0 - start) }
++                }
++                for entry in allowed.prefix(limit) {
++                    let score = log1p(Double(entry.weight))
++                    for suffix in paths[end] {
++                        matches.append(Match(text: entry.text + suffix.text, pieces: suffix.pieces + 1, score: score + suffix.score))
++                    }
++                }
++            }
++            var seen: Set<String> = []
++            for match in matches.sorted(by: { $0.ranksBefore($1) }) where seen.insert(match.text).inserted {
++                paths[start].append(match)
++                if paths[start].count == limit { break }
++            }
++        }
++        return paths[0].map(\.text)
++    }
++}
++
++private final class PinyinResource: NSObject {}
+diff --git a/ios/HEXShared/KeyboardBridge.swift b/ios/HEXShared/KeyboardBridge.swift
+index b445c37..d59c4ee 100644
+--- a/ios/HEXShared/KeyboardBridge.swift
++++ b/ios/HEXShared/KeyboardBridge.swift
+@@ -87,7 +87,7 @@ nonisolated enum KeyboardLaunchRequest: Equatable, Sendable {
+     )
+ 
+     init?(url: URL) {
+-        guard url.scheme == "hex-dictation", url.host == "keyboard" else { return nil }
++        guard url.scheme == "xeyboard-dictation", url.host == "keyboard" else { return nil }
+         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+         let query = components?.queryItems ?? []
+ 
+@@ -144,7 +144,7 @@ nonisolated enum KeyboardLaunchRequest: Equatable, Sendable {
+ 
+     var url: URL {
+         var components = URLComponents()
+-        components.scheme = "hex-dictation"
++        components.scheme = "xeyboard-dictation"
+         components.host = "keyboard"
+ 
+         var items: [URLQueryItem] = []
+@@ -461,9 +461,9 @@ nonisolated enum KeyboardFullAccess: Equatable, Sendable {
+ 
+ @MainActor
+ struct KeyboardBridge {
+-    nonisolated static let appGroup = "group.anomaly.hex.mobile"
++    nonisolated static let appGroup = "group.com.xyydys.xeyboard"
+     /// Posted by the keyboard each time it reports Full Access (`recordFullAccess`).
+-    nonisolated static let fullAccessDarwinNotification = "anomaly.hex.mobile.keyboard.fullAccess"
++    nonisolated static let fullAccessDarwinNotification = "com.xyydys.xeyboard.keyboard.fullAccess"
+     /// The keyboard's Darwin notification, forwarded on the main thread once
+     /// `forwardFullAccessReports()` has run in the app.
+     nonisolated static let fullAccessReported = Notification.Name("KeyboardBridge.fullAccessReported")
+diff --git a/ios/HEXWidgets/HexDictationControl.swift b/ios/HEXWidgets/HexDictationControl.swift
+index e941793..0ca5e46 100644
+--- a/ios/HEXWidgets/HexDictationControl.swift
++++ b/ios/HEXWidgets/HexDictationControl.swift
+@@ -4,7 +4,7 @@ import WidgetKit
+ 
+ @available(iOS 18.0, *)
+ struct HexDictationControl: ControlWidget {
+-    static let kind = "anomaly.hex.mobile.control.dictate"
++    static let kind = "com.xyydys.xeyboard.control.dictate"
+ 
+     var body: some ControlWidgetConfiguration {
+         StaticControlConfiguration(kind: Self.kind) {
+diff --git a/ios/project.yml b/ios/project.yml
+index f51d963..c91c9f3 100644
+--- a/ios/project.yml
++++ b/ios/project.yml
+@@ -1,7 +1,7 @@
+ name: HEXMobile
+ options:
+   minimumXcodeGenVersion: 2.46.0
+-  bundleIdPrefix: anomaly.hex
++  bundleIdPrefix: com.xyydys
+   deploymentTarget:
+     iOS: "18.0"
+   xcodeVersion: "2660"
+@@ -11,7 +11,6 @@ packages:
+     exactVersion: 0.15.5
+ settings:
+   base:
+-    DEVELOPMENT_TEAM: 5NZ4Q7NXJ4
+     SWIFT_VERSION: 6.0
+     # The compiler finds the interface's strings for the String Catalogs (Localizable.xcstrings).
+     SWIFT_EMIT_LOC_STRINGS: YES
+@@ -26,6 +25,10 @@ targets:
+       - HEXActivity
+       - path: ../app/AppIcon.icon
+         buildPhase: resources
++      - path: resources/PinyinLexicon.tsv
++        buildPhase: resources
++      - path: resources/PinyinLexicon-LICENSE.txt
++        buildPhase: resources
+     dependencies:
+       - package: FluidAudio
+       - target: HEXKeyboard
+@@ -35,15 +38,15 @@ targets:
+     info:
+       path: HEXMobile/Info.plist
+       properties:
+-        CFBundleDisplayName: Hex
++        CFBundleDisplayName: Xeyboard
+         CFBundleShortVersionString: $(MARKETING_VERSION)
+         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+         CADisableMinimumFrameDurationOnPhone: true
+         CFBundleURLTypes:
+           - CFBundleTypeRole: Editor
+-            CFBundleURLName: anomaly.hex.mobile.keyboard-session
++            CFBundleURLName: com.xyydys.xeyboard.keyboard-session
+             CFBundleURLSchemes:
+-              - hex-dictation
++              - xeyboard-dictation
+         NSMicrophoneUsageDescription: Hex turns what you say into text on this iPhone. Audio never leaves your iPhone and is deleted once it's transcribed.
+         NSSpeechRecognitionUsageDescription: Hex turns your recordings into text with Apple's on-device speech recognition. Nothing you say is sent to a server.
+         NSSupportsLiveActivities: true
+@@ -73,7 +76,7 @@ targets:
+         TARGETED_DEVICE_FAMILY: "1"
+         OTHER_LDFLAGS: $(inherited) -weak_framework FoundationModels
+         OTHER_SWIFT_FLAGS: $(inherited) -Xfrontend -disable-autolink-framework -Xfrontend FoundationModels
+-        PRODUCT_BUNDLE_IDENTIFIER: anomaly.hex.mobile
++        PRODUCT_BUNDLE_IDENTIFIER: com.xyydys.xeyboard
+         PRODUCT_NAME: HEX
+     scheme:
+       gatherCoverageData: false
+@@ -88,10 +91,14 @@ targets:
+       # The app's String Catalog, so the keyboard's words (the Hex key menu first) follow
+       # the iPhone's language where Hex is translated.
+       - HEXMobile/Localizable.xcstrings
++      - path: resources/PinyinLexicon.tsv
++        buildPhase: resources
++      - path: resources/PinyinLexicon-LICENSE.txt
++        buildPhase: resources
+     info:
+       path: HEXKeyboard/Info.plist
+       properties:
+-        CFBundleDisplayName: Hex Keyboard
++        CFBundleDisplayName: Xeyboard Keyboard
+         NSMicrophoneUsageDescription: Hex turns what you say into text on this iPhone. Audio never leaves your iPhone and is deleted once it's transcribed.
+         NSSpeechRecognitionUsageDescription: Hex turns your recordings into text with Apple's on-device speech recognition. Nothing you say is sent to a server.
+         CFBundleShortVersionString: $(MARKETING_VERSION)
+@@ -114,7 +121,7 @@ targets:
+         GENERATE_INFOPLIST_FILE: NO
+         MARKETING_VERSION: 9.0.0
+         TARGETED_DEVICE_FAMILY: "1"
+-        PRODUCT_BUNDLE_IDENTIFIER: anomaly.hex.mobile.keyboard
++        PRODUCT_BUNDLE_IDENTIFIER: com.xyydys.xeyboard.keyboard
+         PRODUCT_NAME: HEXKeyboard
+         SKIP_INSTALL: YES
+   HEXWidgets:
+@@ -127,7 +134,7 @@ targets:
+     info:
+       path: HEXWidgets/Info.plist
+       properties:
+-        CFBundleDisplayName: Hex
++        CFBundleDisplayName: Xeyboard
+         CFBundleShortVersionString: $(MARKETING_VERSION)
+         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+         NSExtension:
+@@ -140,7 +147,7 @@ targets:
+         GENERATE_INFOPLIST_FILE: NO
+         MARKETING_VERSION: 9.0.0
+         TARGETED_DEVICE_FAMILY: "1"
+-        PRODUCT_BUNDLE_IDENTIFIER: anomaly.hex.mobile.widgets
++        PRODUCT_BUNDLE_IDENTIFIER: com.xyydys.xeyboard.widgets
+         PRODUCT_NAME: HEXWidgets
+         SKIP_INSTALL: YES
+   HEXMobileTests:
+@@ -157,5 +164,5 @@ targets:
+         BUNDLE_LOADER: $(TEST_HOST)
+         CODE_SIGN_STYLE: Automatic
+         GENERATE_INFOPLIST_FILE: YES
+-        PRODUCT_BUNDLE_IDENTIFIER: anomaly.hex.mobile.tests
++        PRODUCT_BUNDLE_IDENTIFIER: com.xyydys.xeyboard.tests
+         TEST_HOST: $(BUILT_PRODUCTS_DIR)/HEX.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/HEX
+\ No newline at end of file
