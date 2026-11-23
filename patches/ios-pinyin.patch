@@ -25,7 +25,7 @@ index 7ae9730..548cba0 100644
      private let url = FileManager.default
          .containerURL(forSecurityApplicationGroupIdentifier: KeyboardBridge.appGroup)?
 diff --git a/ios/HEXKeyboard/KeyboardViewController.swift b/ios/HEXKeyboard/KeyboardViewController.swift
-index e75e993..85b2dc9 100644
+index e75e993..2478724 100644
 --- a/ios/HEXKeyboard/KeyboardViewController.swift
 +++ b/ios/HEXKeyboard/KeyboardViewController.swift
 @@ -198,6 +198,7 @@ final class KeyboardViewController: UIInputViewController {
@@ -36,11 +36,16 @@ index e75e993..85b2dc9 100644
          super.viewWillDisappear(animated)
          bridge.recordKeyboardHidden(at: Date().timeIntervalSince1970)
          switchGuess.keyboardHid(in: currentDocument, at: Date().timeIntervalSince1970)
-@@ -286,8 +287,16 @@ final class KeyboardViewController: UIInputViewController {
+@@ -286,8 +287,21 @@ final class KeyboardViewController: UIInputViewController {
          }
      }
  
 +    private var pinyinDocument: UUID?
++
++    override func selectionDidChange(_ textInput: UITextInput?) {
++        super.selectionDidChange(textInput)
++        fullKeyboard?.engine.resetPinyin()
++    }
 +
      override func textDidChange(_ textInput: UITextInput?) {
          super.textDidChange(textInput)
@@ -53,7 +58,7 @@ index e75e993..85b2dc9 100644
          updateKeyboardTraits()
          followTypingLogField()
          fullKeyboard?.textDidChange()
-@@ -922,6 +931,7 @@ final class KeyboardViewController: UIInputViewController {
+@@ -922,6 +936,7 @@ final class KeyboardViewController: UIInputViewController {
          translationFailure: TranslationFailure? = nil,
          source: String
      ) {
@@ -117,6 +122,46 @@ index c021f24..29ca902 100644
  
      private let bridge: KeyboardBridge
      private let observers = NotificationObservers()
+diff --git a/ios/HEXMobileTests/FullKeyboardEngineTests.swift b/ios/HEXMobileTests/FullKeyboardEngineTests.swift
+index cfe159b..1ab6b5e 100644
+--- a/ios/HEXMobileTests/FullKeyboardEngineTests.swift
++++ b/ios/HEXMobileTests/FullKeyboardEngineTests.swift
+@@ -1085,6 +1085,7 @@ final class FullKeyboardEngineTests: XCTestCase {
+     func testSpaceBarNamesTheDictationLanguage() {
+         let model = KeyboardViewModel()
+         let view = FullKeyboardView(model: model, target: target)
++        view.languageOverride = .english
+         view.languageSettings = LanguageSettings(defaults: defaults)
+         view.frame = CGRect(x: 0, y: 0, width: 393, height: 262)
+         view.layoutIfNeeded()
+@@ -1732,7 +1733,11 @@ final class FullKeyboardEngineTests: XCTestCase {
+             }
+             // Russian and Ukrainian have no Latin letters: press their own а and hold their own
+             // е (Ukrainian's ʼ, its only key with long-press options); Greek its α and ε.
+-            let first = language == .greek ? "α" : language.isLatin ? "a" : "а"
++            let first: String = switch language {
++            case .greek: "α"
++            case .russian, .ukrainian: "а"
++            default: "a"
++            }
+             for (id, kind) in [KeyKind.character(first), .space, .delete].enumerated() {
+                 let key = view.engine.layout.key(kind)!
+                 let sample = TypingLogTouchSample(point: CGPoint(x: key.frame.midX, y: key.frame.midY), timestamp: 0)
+@@ -1750,11 +1755,12 @@ final class FullKeyboardEngineTests: XCTestCase {
+             case .greek: "ε"
+             default: "e"
+             }
+-            view.debugHoldAccent(held, selectIndex: 1)
++            if language != .chinesePinyin { view.debugHoldAccent(held, selectIndex: 1) }
+             counts[language] = asked
+         }
+         XCTAssertGreaterThanOrEqual(counts[.english] ?? 0, 4, "three keys and an accent step")
+-        for language in KeyboardLanguage.allCases {
++        XCTAssertEqual(counts[.chinesePinyin], 3, "three keys and no accent menu")
++        for language in KeyboardLanguage.allCases where language != .chinesePinyin {
+             XCTAssertEqual(counts[language], counts[.english], "\(language.rawValue) haptics")
+         }
+     }
 diff --git a/ios/HEXMobileTests/KeyboardBridgeTests.swift b/ios/HEXMobileTests/KeyboardBridgeTests.swift
 index a7f743b..695857f 100644
 --- a/ios/HEXMobileTests/KeyboardBridgeTests.swift
@@ -157,6 +202,18 @@ index a7f743b..695857f 100644
          XCTAssertNil(KeyboardLaunchRequest(url: url))
      }
  
+diff --git a/ios/HEXMobileTests/KeyboardLayoutTests.swift b/ios/HEXMobileTests/KeyboardLayoutTests.swift
+index 87ec17a..fe55163 100644
+--- a/ios/HEXMobileTests/KeyboardLayoutTests.swift
++++ b/ios/HEXMobileTests/KeyboardLayoutTests.swift
+@@ -648,6 +648,7 @@ final class KeyboardLayoutTests: XCTestCase {
+     func testEachLanguageOffersApplesLayoutsWithItsOwnFirst() {
+         let offered: [KeyboardLanguage: [KeyboardLetterLayout]] = [
+             .english: [.qwerty, .azerty, .qwertz, .dvorak],
++            .chinesePinyin: [.qwerty],
+             .german: [.own, .qwertz, .qwerty, .azerty],
+             .spanish: [.own, .qwerty, .azerty, .qwertz],
+             .french: [.azerty, .qwerty, .qwertz],
 diff --git a/ios/HEXShared/FullKeyboard/AutocorrectEngine.swift b/ios/HEXShared/FullKeyboard/AutocorrectEngine.swift
 index 5957554..ec0ac27 100644
 --- a/ios/HEXShared/FullKeyboard/AutocorrectEngine.swift
@@ -186,7 +243,7 @@ index 5957554..ec0ac27 100644
      }
  
 diff --git a/ios/HEXShared/FullKeyboard/FullKeyboardEngine.swift b/ios/HEXShared/FullKeyboard/FullKeyboardEngine.swift
-index 471c7b0..41343b5 100644
+index 471c7b0..eed11f7 100644
 --- a/ios/HEXShared/FullKeyboard/FullKeyboardEngine.swift
 +++ b/ios/HEXShared/FullKeyboard/FullKeyboardEngine.swift
 @@ -136,6 +136,30 @@ final class FullKeyboardEngine {
@@ -292,7 +349,18 @@ index 471c7b0..41343b5 100644
              if target.enablesReturnKeyAutomatically == true && !target.hasText {
                  typingLog?.edit("return", [
                      TypingLogField("returnKeyType", .string(TypingLogTraits.name(target.returnKeyType ?? .default))),
-@@ -878,6 +923,10 @@ final class FullKeyboardEngine {
+@@ -811,7 +856,9 @@ final class FullKeyboardEngine {
+             // a slide: nothing, and back too. Off the keys: nothing, and the page stays.
+             if let returnLayer = touch.returnLayer {
+                 if let under = slideTarget(for: touch, at: point), let character = under.character {
+-                    if dropsSuggestionSpace(before: character) || !correctWord(endingWith: character) {
++                    if allowsPinyin {
++                        commitCharacter(under, at: point)
++                    } else if dropsSuggestionSpace(before: character) || !correctWord(endingWith: character) {
+                         insert(character, source: "slide")
+                     }
+                     layerState.switchTo(returnLayer)
+@@ -878,6 +925,10 @@ final class FullKeyboardEngine {
      /// keyboard does (black box, iOS 27.2), and the strip then offers what you typed
      /// (`offeringRevert`); Adaptive touch keeps the word's taps for that revert.
      func deleteBackward(takesSwipeBack: Bool = true, source: String = "key") {
@@ -303,7 +371,7 @@ index 471c7b0..41343b5 100644
          // The held space is a boundary question that deletes nothing: ask it before forgetting
          // what Hex typed, and keep the record when it answers, as the text has not changed.
          if takesSwipeBack, dropsHeldSpace() { return }
-@@ -909,6 +958,10 @@ final class FullKeyboardEngine {
+@@ -909,6 +960,10 @@ final class FullKeyboardEngine {
      }
  
      func deleteWordBackward() {
@@ -314,7 +382,7 @@ index 471c7b0..41343b5 100644
          forgetTypingContext()
          swipedWord = nil
          adaptiveTouch?.forget()
-@@ -945,6 +998,17 @@ final class FullKeyboardEngine {
+@@ -945,6 +1000,17 @@ final class FullKeyboardEngine {
      /// `down`: where a tap's finger went down, for Adaptive touch (nil for a slide from shift).
      private func commitCharacter(_ key: KeyboardKey, at point: CGPoint, down: CGPoint? = nil) {
          guard let character = key.character else { return }
@@ -332,7 +400,7 @@ index 471c7b0..41343b5 100644
          spaceBeforeNextWord(character)
          var text = layerState.layer == .letters && shift.isUppercase ? character.uppercased() : character
          if layerState.layer == .letters {
-@@ -1176,6 +1240,7 @@ final class FullKeyboardEngine {
+@@ -1176,6 +1242,7 @@ final class FullKeyboardEngine {
  
      /// `point` is where the space bar was tapped, as on the unsplit keyboard.
      private func typeSpace(at point: CGPoint? = nil) {

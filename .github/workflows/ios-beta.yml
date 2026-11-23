@@ -32,11 +32,27 @@ jobs:
           git -C hex apply "$GITHUB_WORKSPACE/patches/ios-pinyin.patch"
           mkdir -p hex/ios/resources
           cp assets/PinyinLexicon.tsv assets/PinyinLexicon-LICENSE.txt hex/ios/resources/
+      - name: Select Xcode
+        run: |
+          preferred=/Applications/Xcode_26.6.app/Contents/Developer
+          if [[ -d "$preferred" ]]; then
+            sudo xcode-select --switch "$preferred"
+          fi
+          xcodebuild -version
+          sdk=$(xcrun --sdk iphoneos --show-sdk-version)
+          if (( ${sdk%%.*} < 26 )); then
+            echo "An iOS 26 or newer SDK is required, but Xcode has $sdk." >&2
+            exit 1
+          fi
+      - name: Smoke-test the Pinyin engine and bundled dictionary
+        run: |
+          swiftc -swift-version 6 \
+            hex/ios/HEXShared/FullKeyboard/PinyinComposition.swift scripts/PinyinSmoke.swift \
+            -o "$RUNNER_TEMP/pinyin-smoke"
+          "$RUNNER_TEMP/pinyin-smoke" assets/PinyinLexicon.tsv
       - name: Generate the iOS project and resolve pinned dependencies
         working-directory: hex/ios
         run: |
-          sudo xcode-select --switch /Applications/Xcode_26.6.app/Contents/Developer
-          xcodebuild -version
           command -v xcodegen >/dev/null || brew install xcodegen
           scripts/fetch-cleanup-model.sh
           xcodegen generate
@@ -68,6 +84,8 @@ jobs:
           test -s "$device/PlugIns/HEXKeyboard.appex/PinyinLexicon.tsv"
           test -s "$device/PlugIns/HEXKeyboard.appex/PinyinLexicon-LICENSE.txt"
           test -f "$device/PlugIns/HEXWidgets.appex/HEXWidgets"
+          cp ../LICENSE "$device/Hex-LICENSE.txt"
+          cp ../THIRD_PARTY_NOTICES.md "$device/Hex-THIRD-PARTY-NOTICES.md"
           mkdir -p "$RUNNER_TEMP/device-package/Payload"
           ditto "$device" "$RUNNER_TEMP/device-package/Payload/HEX.app"
           ditto -c -k --keepParent "$RUNNER_TEMP/device-package/Payload" "$dist/Xeyboard-Beta-unsigned.ipa"
@@ -77,6 +95,8 @@ jobs:
           test -f "$simulator/PlugIns/HEXKeyboard.appex/HEXKeyboard"
           test -s "$simulator/PlugIns/HEXKeyboard.appex/PinyinLexicon.tsv"
           test -s "$simulator/PlugIns/HEXKeyboard.appex/PinyinLexicon-LICENSE.txt"
+          cp ../LICENSE "$simulator/Hex-LICENSE.txt"
+          cp ../THIRD_PARTY_NOTICES.md "$simulator/Hex-THIRD-PARTY-NOTICES.md"
           ditto -c -k --keepParent "$simulator" "$dist/Xeyboard-Beta-iOS-Simulator.zip"
 
           cd "$dist"
