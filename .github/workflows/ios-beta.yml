@@ -1,8 +1,8 @@
-name: iOS Pinyin Beta
+name: iOS Pinyin Keyboard Fit
 
 on:
   push:
-    branches: [beta/pinyin]
+    branches: [beta/ios26-keyboard-fit]
   workflow_dispatch:
 
 permissions:
@@ -30,6 +30,8 @@ jobs:
         run: |
           git -C hex apply --check "$GITHUB_WORKSPACE/patches/ios-pinyin.patch"
           git -C hex apply "$GITHUB_WORKSPACE/patches/ios-pinyin.patch"
+          git -C hex apply --check "$GITHUB_WORKSPACE/patches/hex-ios26-keyboard-sizing.patch"
+          git -C hex apply "$GITHUB_WORKSPACE/patches/hex-ios26-keyboard-sizing.patch"
           mkdir -p hex/ios/resources
           cp assets/PinyinLexicon.tsv assets/PinyinLexicon-LICENSE.txt hex/ios/resources/
       - name: Select Xcode
@@ -62,7 +64,7 @@ jobs:
           xcodebuild -resolvePackageDependencies \
             -project HEXMobile.xcodeproj -scheme HEXMobile \
             -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile
-      - name: Build and package the device and simulator apps
+      - name: Build and package the iPhone IPA
         working-directory: hex/ios
         run: |
           build_app() {
@@ -88,51 +90,12 @@ jobs:
           cp ../THIRD_PARTY_NOTICES.md "$device/Hex-THIRD-PARTY-NOTICES.md"
           mkdir -p "$RUNNER_TEMP/device-package/Payload"
           ditto "$device" "$RUNNER_TEMP/device-package/Payload/HEX.app"
-          ditto -c -k --keepParent "$RUNNER_TEMP/device-package/Payload" "$dist/Xeyboard-Beta-unsigned.ipa"
-
-          build_app 'generic/platform=iOS Simulator' "$RUNNER_TEMP/xeyboard-simulator"
-          simulator="$RUNNER_TEMP/xeyboard-simulator/Build/Products/Release-iphonesimulator/HEX.app"
-          test -f "$simulator/PlugIns/HEXKeyboard.appex/HEXKeyboard"
-          test -s "$simulator/PlugIns/HEXKeyboard.appex/PinyinLexicon.tsv"
-          test -s "$simulator/PlugIns/HEXKeyboard.appex/PinyinLexicon-LICENSE.txt"
-          cp ../LICENSE "$simulator/Hex-LICENSE.txt"
-          cp ../THIRD_PARTY_NOTICES.md "$simulator/Hex-THIRD-PARTY-NOTICES.md"
-          ditto -c -k --keepParent "$simulator" "$dist/Xeyboard-Beta-iOS-Simulator.zip"
+          ditto -c -k --keepParent "$RUNNER_TEMP/device-package/Payload" "$dist/Xeyboard-Fit-unsigned.ipa"
 
           cd "$dist"
-          shasum -a 256 Xeyboard-Beta-unsigned.ipa Xeyboard-Beta-iOS-Simulator.zip > SHA256SUMS
+          shasum -a 256 Xeyboard-Fit-unsigned.ipa > SHA256SUMS
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: xeyboard-ios-beta
+          name: xeyboard-ios26-keyboard-fit
           path: dist/
           if-no-files-found: error
-
-  publish:
-    needs: build
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: xeyboard-ios-beta
-          path: dist
-      - name: Attach builds to a GitHub prerelease
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag="ios-pinyin-beta-$GITHUB_RUN_NUMBER"
-          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            cat > "$RUNNER_TEMP/release-notes.md" <<'EOF'
-          这是简体 26 键全拼 Beta。
-
-          - Xeyboard-Beta-unsigned.ipa 是 iPhone 构建，安装前需要为主 App 和扩展配置签名及描述文件。
-          - Xeyboard-Beta-iOS-Simulator.zip 可解压后拖到运行中的 iPhone 模拟器中安装。
-          - SHA256SUMS 用于校验两个下载文件。
-          EOF
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "Xeyboard iOS Pinyin Beta $GITHUB_RUN_NUMBER" \
-              --prerelease --latest=false --notes-file "$RUNNER_TEMP/release-notes.md"
-          fi
-          gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber \
-            dist/Xeyboard-Beta-unsigned.ipa dist/Xeyboard-Beta-iOS-Simulator.zip dist/SHA256SUMS
